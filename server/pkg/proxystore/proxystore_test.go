@@ -18,6 +18,7 @@ package proxystore
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"testing"
 
@@ -119,4 +120,86 @@ func UnCommentMeAmimTestSessionAffinitySetClientIP(t *testing.T) {
 			},
 		})
 	})
+}
+
+// TestServiceClusterIPUDP
+func TestServiceClusterIPUDP(t *testing.T) {
+	store := New()
+	store.Update(func(tx *Tx) {
+		tx.SetService(&localnetv1.Service{
+			Namespace: "test",
+			Name:      "service-udp",
+			Type:      "ClusterIP",
+			IPs:       &localnetv1.ServiceIPs{ClusterIPs: localnetv1.NewIPSet("10.1.2.6")},
+			Ports: []*localnetv1.PortMapping{
+				{Name: "udpPort",
+					Port:       80,
+					Protocol:   localnetv1.Protocol_UDP,
+					TargetPort: 80},
+			},
+		}, []string{"*"})
+
+		tx.SetEndpointsOfSource("test", "source-of-truth", []*localnetv1.EndpointInfo{
+			{
+				Namespace:   "test",
+				SourceName:  "source-of-truth",
+				ServiceName: "service-udp",
+				Endpoint:    &localnetv1.Endpoint{IPs: localnetv1.NewIPSet("10.2.0.1")},
+				Conditions:  &localnetv1.EndpointConditions{Ready: true},
+			},
+		})
+	})
+	structData := []struct {
+		test    string
+		payload []byte
+		want    []byte
+	}{
+		{
+			"Sending data.....",
+			[]byte("testing kpng...\n"),
+			[]byte("Request received: testing kpng"),
+		},
+		{
+			"Sending another data....",
+			[]byte("testing kpng....\n"),
+			[]byte("Request received: testing kpng"),
+		},
+	}
+
+	for _, tc := range structData {
+		t.Run(tc.test, func(t *testing.T) {
+			count := 0
+			for {
+				fmt.Println("count", count)
+				conn, err := net.Dial("udp", "10.1.2.6:80")
+				if err != nil {
+					t.Error("could not connect to UDP server: ", err)
+					return
+				}
+				defer conn.Close()
+
+				fmt.Println("Sending data...")
+				if _, err := conn.Write(tc.payload); err != nil {
+					t.Error("could not write payload to UDP server:", err)
+					return
+				}
+
+				/*
+				   fmt.Println("Getting data...")
+				   out := make([]byte, 1024)
+				   if _, err := conn.Read(out); err == nil {
+				           if bytes.Compare(out, tc.want) == 0 {
+				                   t.Error("response did match expected output")
+				           }
+				   } else {
+				           t.Error("could not read from connection")
+				   }*/
+				count = count + 1
+				if count == 10 {
+					break
+				}
+				fmt.Println("Done...")
+			}
+		})
+	}
 }
